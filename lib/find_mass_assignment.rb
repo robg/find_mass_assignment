@@ -13,18 +13,28 @@ class String
   # Examples of matching strings:
   #   "Foo.new( { :bar => 'baz' } )"
   #   "Foo.update_attributes!(params[:foo])"
-  MASS_ASSIGNMENT = /(\w+)\.(new|create|update_attributes|build)!*\(/
+  #   "@foo.update_attributes params[:foo]"
+  #   "@foo.bars.build(params[:bar])"
+  MASS_ASSIGNMENT = /(\w+)\.(new|create(_\w+)?|update_attributes|build(_\w+)?)!?(\s*\(.+\)|\s+\w+)/
   
   # Return the strings that represent potential mass assignment problems.
-  # The MASS_ASSIGNMENT regex returns, e.g., ['Post', 'new'] because of
-  # the grouping methods; we want the first of the two for each match.
+  # The MASS_ASSIGNMENT regex returns, e.g., ['Post', 'new', nil, nil, 'params[:post]'] because of
+  # the grouping methods; we want either the first string or a substring of the second or third groups of the match
+  # depending on what sort of mass assignment is being performed.
   # For example, the call to scan might return
-  #   [['Post', 'new'], ['User', 'create']]
-  # We then select the first element of each subarray, returning
-  #   ['Post', 'User']
+  #   [['Post', 'new', nil, nil, 'params[:post]'], ['User', 'create_address', '_address', nil, 'params[:address]']]
+  # We then select the appropriate element of each subarray, returning
+  #   ['Post', 'Address']
   # Finally, we call classify to turn the string into a class.
   def mass_assignment_models
-    scan(MASS_ASSIGNMENT).map { |problem| problem.first.classify }
+    scan(MASS_ASSIGNMENT).map do |problem|
+      if problem[1] =~ %r/create_|build_/
+        # has_one association mass assignment
+        (problem[2] || problem[3]).sub(%r/\A_/, '').classify
+      else
+        problem.first.classify
+      end
+    end
   end
 
   # Return true if the string has potential mass assignment code.
@@ -33,10 +43,12 @@ class String
   end
   
   # Return true if the model defines attr_accessible.
+  # Model class files are found by converting the CamelCase Model name (provided by classify) 
+  # into the underscore format.
   # Note that 'attr_accessible' must be preceded by nothing other than
   # whitespace; this catches cases where attr_accessible is commented out.
   def attr_accessible?
-    model = "#{RAILS_ROOT}/app/models/#{self.classify}.rb"
+    model = "#{RAILS_ROOT}/app/models/#{self.underscore}.rb"
     if File.exist?(model)
       return @@cache[model] unless @@cache[model].nil?
       @@cache[model] = File.open(model).read =~ /^\s*attr_accessible/
